@@ -18,7 +18,7 @@ class Jinhong270BilibiliPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         config = context.get_config() or {}
-        self.api_base_url = config.get("api_base_url", "https://jinhong270-api.hf.space")
+        self.api_base_url = "https://jinhong270-api.hf.space"
         self.temp_retention = config.get("temp_file_retention", 3600)
         self.max_search_results = config.get("max_search_results", 10)
         self.download_timeout = config.get("download_timeout", 120)
@@ -49,9 +49,11 @@ class Jinhong270BilibiliPlugin(Star):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, params=params) as resp:
                     resp.raise_for_status()
-                    return await resp.json()
+                    text = await resp.text()
+                    logger.debug(f"API响应 {endpoint}: {text[:200]}")
+                    return await resp.json(content_type=None)
         except Exception as e:
-            logger.error(f"API请求失败: {e}")
+            logger.error(f"API请求失败 {endpoint}: {e}")
             return {"error": str(e)}
 
     async def _download_file(self, url: str, save_path: Path) -> bool:
@@ -71,22 +73,36 @@ class Jinhong270BilibiliPlugin(Star):
     def _format_video_info(self, data: dict) -> str:
         if not data:
             return "获取信息失败"
-        title = data.get("title", "未知")
-        bvid = data.get("bvid", "未知")
-        owner = data.get("owner", {}).get("name", "未知")
-        stat = data.get("stat", {})
-        view = stat.get("view", "0")
-        like = stat.get("like", "0")
-        coin = stat.get("coin", "0")
-        favorite = stat.get("favorite", "0")
-        share = stat.get("share", "0")
-        danmaku = stat.get("danmaku", "0")
-        pubdate = data.get("pubdate", 0)
-        pubdate_str = time.strftime("%Y-%m-%d", time.localtime(pubdate)) if pubdate else "未知"
-        desc = data.get("desc", "")
+        if "data" in data:
+            data = data["data"]
+        if "View" in data:
+            data = data["View"]
+        title = data.get("title") or data.get("Title") or "未知"
+        bvid = data.get("bvid") or data.get("Bvid") or "未知"
+        owner = data.get("owner", {})
+        if isinstance(owner, dict):
+            owner_name = owner.get("name") or owner.get("Name") or "未知"
+        else:
+            owner_name = "未知"
+        stat = data.get("stat") or data.get("Stat") or {}
+        view = stat.get("view") or stat.get("View") or "0"
+        like = stat.get("like") or stat.get("Like") or "0"
+        coin = stat.get("coin") or stat.get("Coin") or "0"
+        favorite = stat.get("favorite") or stat.get("Favorite") or "0"
+        share = stat.get("share") or stat.get("Share") or "0"
+        danmaku = stat.get("danmaku") or stat.get("Danmaku") or "0"
+        pubdate = data.get("pubdate") or data.get("Pubdate") or data.get("ctime") or data.get("Ctime") or 0
+        if pubdate:
+            try:
+                pubdate_str = time.strftime("%Y-%m-%d", time.localtime(pubdate))
+            except:
+                pubdate_str = "未知"
+        else:
+            pubdate_str = "未知"
+        desc = data.get("desc") or data.get("Desc") or ""
         if len(desc) > 200:
             desc = desc[:200] + "..."
-        return f"📹 {title}\n🔗 {bvid}\n👤 {owner}\n📅 {pubdate_str}\n▶️ 播放:{view} 👍{like} 💰{coin} ⭐{favorite} 🔁{share} 💬{danmaku}\n📝 {desc}"
+        return f"📹 {title}\n🔗 {bvid}\n👤 {owner_name}\n📅 {pubdate_str}\n▶️ 播放:{view} 👍{like} 💰{coin} ⭐{favorite} 🔁{share} 💬{danmaku}\n📝 {desc}"
 
     @filter.command("search")
     async def search_entry(self, event: AstrMessageEvent):
@@ -111,7 +127,12 @@ class Jinhong270BilibiliPlugin(Star):
             return
         videos = []
         if isinstance(data, dict):
-            videos = data.get("data", {}).get("result", [])
+            if "data" in data:
+                videos = data["data"].get("result") or data["data"].get("list") or []
+            elif "result" in data:
+                videos = data["result"]
+            elif "list" in data:
+                videos = data["list"]
         elif isinstance(data, list):
             videos = data
         if not videos:
@@ -121,10 +142,10 @@ class Jinhong270BilibiliPlugin(Star):
         result_lines = []
         for idx, v in enumerate(videos[:self.max_search_results], 1):
             title = v.get("title", "").replace("<em class=\"keyword\">", "").replace("</em>", "")
-            bvid = v.get("bvid", "")
-            author = v.get("author", v.get("owner", {}).get("name", "未知"))
-            duration = v.get("duration", "未知")
-            play = v.get("play", v.get("stat", {}).get("view", "0"))
+            bvid = v.get("bvid") or v.get("bvid_str") or ""
+            author = v.get("author") or v.get("owner", {}).get("name") or "未知"
+            duration = v.get("duration") or "未知"
+            play = v.get("play") or v.get("stat", {}).get("view") or "0"
             line = f"{idx}. {title}\nBV:{bvid} | UP:{author}\n时长:{duration} | 播放:{play}"
             result_lines.append(line)
 
@@ -157,7 +178,7 @@ class Jinhong270BilibiliPlugin(Star):
                     yield event.plain_result("序号无效，请重新输入有效序号：")
                     return
                 video = videos[idx]
-                bvid = video.get("bvid")
+                bvid = video.get("bvid") or video.get("bvid_str")
                 if not bvid:
                     yield event.plain_result("无法获取BV号。")
                     return
@@ -178,17 +199,31 @@ class Jinhong270BilibiliPlugin(Star):
                 yield event.plain_result(f"获取下载链接失败: {download_data['error']}")
                 return
 
-            download_url = download_data.get("url")
+            download_url = None
+            if isinstance(download_data, dict):
+                download_url = download_data.get("url")
+                if not download_url:
+                    data = download_data.get("data", {})
+                    if isinstance(data, dict):
+                        download_url = data.get("url")
+                if not download_url:
+                    qualities = download_data.get("qualities") or download_data.get("data", {}).get("qualities")
+                    if qualities and isinstance(qualities, list):
+                        for q in qualities:
+                            if isinstance(q, dict) and q.get("url"):
+                                download_url = q["url"]
+                                break
+
             if not download_url:
-                qualities = download_data.get("qualities")
-                if qualities and isinstance(qualities, list):
-                    download_url = qualities[0].get("url")
-            if not download_url:
-                yield event.plain_result("下载链接为空。")
+                logger.warning(f"下载链接解析失败，原始响应: {download_data}")
+                yield event.plain_result("下载链接解析失败，请联系管理员。")
                 return
 
             yield event.plain_result("正在下载视频，请稍候...")
-            video_title = info_data.get("title", video.get("title", "video"))
+            video_title = info_data.get("title") or video.get("title") or "bilibili_video"
+            if isinstance(info_data, dict):
+                if "data" in info_data:
+                    video_title = info_data["data"].get("title") or video_title
             safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title) or "bilibili_video"
             safe_title = safe_title[:50]
             file_path = self.temp_dir / f"{safe_title}.mp4"
