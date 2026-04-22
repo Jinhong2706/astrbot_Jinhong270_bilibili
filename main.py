@@ -146,7 +146,7 @@ class Jinhong270BilibiliPlugin(Star):
             "videos": videos[:self.max_search_results]
         }
 
-    @filter.on_message()
+    @filter.regex(r'^(?!search\b).*')
     async def handle_user_reply(self, event: AstrMessageEvent):
         session_key = event.unified_msg_origin
         if session_key not in self.user_sessions:
