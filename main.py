@@ -12,7 +12,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 
-@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.3.0")
+@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.3.1")
 class Jinhong270BilibiliPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -40,8 +40,12 @@ class Jinhong270BilibiliPlugin(Star):
     async def _fetch_api(self, endpoint: str, params: dict = None) -> dict:
         url = f"{self.api_base_url}{endpoint}"
         timeout = aiohttp.ClientTimeout(total=30)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com"
+        }
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.get(url, params=params) as resp:
                     resp.raise_for_status()
                     return await resp.json(content_type=None)
@@ -51,8 +55,13 @@ class Jinhong270BilibiliPlugin(Star):
 
     async def _download_file(self, url: str, save_path: Path) -> bool:
         timeout = aiohttp.ClientTimeout(total=self.download_timeout)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com",
+            "Origin": "https://www.bilibili.com"
+        }
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.get(url) as resp:
                     resp.raise_for_status()
                     async with aiofiles.open(save_path, 'wb') as f:
