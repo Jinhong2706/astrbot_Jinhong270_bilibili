@@ -112,7 +112,8 @@ class Jinhong270BilibiliPlugin(Star):
             yield event.plain_result("格式：search 关键词")
             return
         keyword = parts[1].strip()
-        await self._do_search(event, keyword)
+        async for result in self._do_search(event, keyword):
+            yield result
 
     async def _do_search(self, event: AstrMessageEvent, keyword: str):
         data = await self._fetch_api(f"/bilibili/search/{keyword}", params={"page": 1, "page_size": self.max_search_results})
@@ -155,7 +156,8 @@ class Jinhong270BilibiliPlugin(Star):
         msg = event.message_str.strip()
         if session["state"] == "awaiting_keyword":
             del self.user_sessions[session_key]
-            await self._do_search(event, msg)
+            async for result in self._do_search(event, msg):
+                yield result
         elif session["state"] == "awaiting_selection":
             videos = session.get("videos", [])
             del self.user_sessions[session_key]
@@ -187,8 +189,9 @@ class Jinhong270BilibiliPlugin(Star):
                 yield event.plain_result("下载链接为空。")
                 return
             yield event.plain_result("正在下载视频，请稍候...")
-            safe_title = re.sub(r'[\\/*?:"<>|]', "", video.get("title", "video"))[:50]
-            file_path = self.temp_dir / f"{bvid}_{safe_title}.mp4"
+            video_title = info_data.get("title", video.get("title", "video"))
+            safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)[:50]
+            file_path = self.temp_dir / f"{safe_title}.mp4"
             success = await self._download_file(download_url, file_path)
             if not success or not file_path.exists():
                 yield event.plain_result("视频下载失败。")
