@@ -3,7 +3,7 @@ display_name: "Bilibili视频"
 description: "搜索B站视频，获取详情并直接下载发送视频文件。"
 author: "Jinhong270"
 version: "1.1.0"
-repo: "https://github.com/你的用户名/astrbot_Jinhong270_bilibili"
+repo: "https://github.com/Jinhong2706/astrbot_Jinhong270_bilibili"
 astrbot_version: ">=4.16,<5"
 support_platforms:
   - aiocqhttp
