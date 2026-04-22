@@ -136,11 +136,11 @@ class Jinhong270BilibiliPlugin(Star):
             duration = v.get("duration", "未知")
             play = v.get("play", v.get("stat", {}).get("view", "0"))
             content = f"{idx}. {title}\nBV:{bvid} | UP:{author}\n时长:{duration} | 播放:{play}"
-            nodes.append(Node(content=Plain(content)))
+            nodes.append(Node(content=[Plain(content)]))
         try:
             yield event.chain_result([Nodes(nodes)])
         except Exception:
-            text_result = "\n".join([n.content.text for n in nodes])
+            text_result = "\n".join([n.content[0].text for n in nodes])
             yield event.plain_result(text_result)
         self.user_sessions[event.unified_msg_origin] = {
             "state": "awaiting_selection",
