@@ -1,7 +1,6 @@
 import aiohttp
 import aiofiles
 import asyncio
-import os
 import tempfile
 import time
 import re
@@ -13,7 +12,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 
-@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.2.0")
+@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.3.0")
 class Jinhong270BilibiliPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -38,10 +37,6 @@ class Jinhong270BilibiliPlugin(Star):
                 pass
             await asyncio.sleep(600)
 
-    @filter.regex(r"^/bilibili\s+help$")
-    async def bilibili_help(self, event: AstrMessageEvent):
-        yield event.plain_result("📺 Bilibili 插件帮助\n发送 search 关键词 或直接发送 search 开始搜索下载。")
-
     async def _fetch_api(self, endpoint: str, params: dict = None) -> dict:
         url = f"{self.api_base_url}{endpoint}"
         timeout = aiohttp.ClientTimeout(total=30)
@@ -49,8 +44,6 @@ class Jinhong270BilibiliPlugin(Star):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, params=params) as resp:
                     resp.raise_for_status()
-                    text = await resp.text()
-                    logger.debug(f"API响应 {endpoint}: {text[:200]}")
                     return await resp.json(content_type=None)
         except Exception as e:
             logger.error(f"API请求失败 {endpoint}: {e}")
@@ -103,6 +96,85 @@ class Jinhong270BilibiliPlugin(Star):
         if len(desc) > 200:
             desc = desc[:200] + "..."
         return f"📹 {title}\n🔗 {bvid}\n👤 {owner_name}\n📅 {pubdate_str}\n▶️ 播放:{view} 👍{like} 💰{coin} ⭐{favorite} 🔁{share} 💬{danmaku}\n📝 {desc}"
+
+    def _extract_bvid(self, text: str) -> Optional[str]:
+        patterns = [
+            r'(BV[a-zA-Z0-9]{10})',
+            r'bvid=([a-zA-Z0-9]{12})',
+            r'video/(BV[a-zA-Z0-9]{10})',
+            r'bilibili\.com/video/(BV[a-zA-Z0-9]{10})',
+            r'b23\.tv/([a-zA-Z0-9]+)'
+        ]
+        for p in patterns:
+            match = re.search(p, text)
+            if match:
+                return match.group(1)
+        return None
+
+    def _extract_download_url(self, download_data: dict) -> Optional[str]:
+        if not isinstance(download_data, dict):
+            return None
+        data = download_data.get("data")
+        if not isinstance(data, dict):
+            return None
+        dash = data.get("dash")
+        if isinstance(dash, dict):
+            videos = dash.get("video")
+            if isinstance(videos, list) and videos:
+                first_video = videos[0]
+                if isinstance(first_video, dict):
+                    return first_video.get("baseUrl") or first_video.get("base_url")
+        return None
+
+    async def _process_video_by_bvid(self, event: AstrMessageEvent, bvid: str):
+        info_data = await self._fetch_api(f"/bilibili/video/{bvid}")
+        if "error" in info_data:
+            yield event.plain_result(f"获取视频信息失败: {info_data['error']}")
+            return
+
+        info_text = self._format_video_info(info_data)
+        yield event.plain_result(info_text)
+
+        download_data = await self._fetch_api(f"/bilibili/video/download/{bvid}")
+        if "error" in download_data:
+            yield event.plain_result(f"获取下载链接失败: {download_data['error']}")
+            return
+
+        download_url = self._extract_download_url(download_data)
+        if not download_url:
+            logger.warning(f"下载链接解析失败，原始响应: {download_data}")
+            yield event.plain_result("下载链接解析失败，请联系管理员。")
+            return
+
+        yield event.plain_result("正在下载视频，请稍候...")
+        video_title = "bilibili_video"
+        if isinstance(info_data, dict):
+            if "data" in info_data:
+                video_title = info_data["data"].get("title") or video_title
+            elif "title" in info_data:
+                video_title = info_data["title"]
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title) or "bilibili_video"
+        safe_title = safe_title[:50]
+        file_path = self.temp_dir / f"{safe_title}.mp4"
+
+        success = await self._download_file(download_url, file_path)
+        if not success or not file_path.exists():
+            yield event.plain_result("视频下载失败。")
+            return
+
+        try:
+            yield event.file_result(str(file_path))
+        except Exception as e:
+            yield event.plain_result(f"发送文件失败: {e}\n下载链接: {download_url}")
+
+    @filter.regex(r'.*(bilibili\.com|BV[a-zA-Z0-9]{10}|b23\.tv).*')
+    async def handle_bilibili_link(self, event: AstrMessageEvent):
+        msg = event.message_str.strip()
+        bvid = self._extract_bvid(msg)
+        if not bvid:
+            return
+        async for result in self._process_video_by_bvid(event, bvid):
+            yield result
 
     @filter.command("search")
     async def search_entry(self, event: AstrMessageEvent):
@@ -186,58 +258,9 @@ class Jinhong270BilibiliPlugin(Star):
                 yield event.plain_result("请输入有效数字序号：")
                 return
 
-            info_data = await self._fetch_api(f"/bilibili/video/{bvid}")
-            if "error" in info_data:
-                yield event.plain_result(f"获取视频信息失败: {info_data['error']}")
-                return
-
-            info_text = self._format_video_info(info_data)
-            yield event.plain_result(info_text)
-
-            download_data = await self._fetch_api(f"/bilibili/video/download/{bvid}")
-            if "error" in download_data:
-                yield event.plain_result(f"获取下载链接失败: {download_data['error']}")
-                return
-
-            download_url = None
-            if isinstance(download_data, dict):
-                download_url = download_data.get("url")
-                if not download_url:
-                    data = download_data.get("data", {})
-                    if isinstance(data, dict):
-                        download_url = data.get("url")
-                if not download_url:
-                    qualities = download_data.get("qualities") or download_data.get("data", {}).get("qualities")
-                    if qualities and isinstance(qualities, list):
-                        for q in qualities:
-                            if isinstance(q, dict) and q.get("url"):
-                                download_url = q["url"]
-                                break
-
-            if not download_url:
-                logger.warning(f"下载链接解析失败，原始响应: {download_data}")
-                yield event.plain_result("下载链接解析失败，请联系管理员。")
-                return
-
-            yield event.plain_result("正在下载视频，请稍候...")
-            video_title = info_data.get("title") or video.get("title") or "bilibili_video"
-            if isinstance(info_data, dict):
-                if "data" in info_data:
-                    video_title = info_data["data"].get("title") or video_title
-            safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title) or "bilibili_video"
-            safe_title = safe_title[:50]
-            file_path = self.temp_dir / f"{safe_title}.mp4"
-
-            success = await self._download_file(download_url, file_path)
-            if not success or not file_path.exists():
-                yield event.plain_result("视频下载失败。")
-                return
-
             del self.user_sessions[session_key]
-            try:
-                yield event.file_result(str(file_path))
-            except Exception as e:
-                yield event.plain_result(f"发送文件失败: {e}\n下载链接: {download_url}")
+            async for result in self._process_video_by_bvid(event, bvid):
+                yield result
 
     async def terminate(self):
         if self._clean_task and not self._clean_task.done():
