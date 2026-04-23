@@ -11,9 +11,8 @@ from urllib.parse import quote
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-from astrbot.api.message_components import File
 
-@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.3.2")
+@register("astrbot_Jinhong270_bilibili", "Jinhong270", "B站视频搜索下载一体化插件", "1.1.0")
 class Jinhong270BilibiliPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -136,6 +135,31 @@ class Jinhong270BilibiliPlugin(Star):
                     return first_video.get("baseUrl") or first_video.get("base_url")
         return None
 
+    async def _send_file_via_onebot(self, event: AstrMessageEvent, file_path: Path):
+        """尝试通过 OneBot 协议上传文件，成功返回 True，失败返回 False"""
+        try:
+            adapter = event.session.adapter
+            msg_obj = event.message_obj
+            if msg_obj.message_type == 'private':
+                user_id = msg_obj.sender.user_id
+                await adapter.call_api('upload_private_file', {
+                    'user_id': user_id,
+                    'file': str(file_path),
+                    'name': file_path.name
+                })
+                return True
+            elif msg_obj.message_type == 'group':
+                group_id = msg_obj.group_id
+                await adapter.call_api('upload_group_file', {
+                    'group_id': group_id,
+                    'file': str(file_path),
+                    'name': file_path.name
+                })
+                return True
+        except Exception as e:
+            logger.warning(f"OneBot 文件上传失败: {e}")
+        return False
+
     async def _process_video_by_bvid(self, event: AstrMessageEvent, bvid: str):
         info_data = await self._fetch_api(f"/bilibili/video/{bvid}")
         if "error" in info_data:
@@ -172,10 +196,9 @@ class Jinhong270BilibiliPlugin(Star):
             yield event.plain_result("视频下载失败。")
             return
 
-        try:
-            yield event.chain_result([File(str(file_path))])
-        except Exception as e:
-            yield event.plain_result(f"发送文件失败，可手动复制链接下载:\n{download_url}")
+        sent = await self._send_file_via_onebot(event, file_path)
+        if not sent:
+            yield event.plain_result(f"文件上传失败，可手动复制链接下载:\n{download_url}")
 
     @filter.regex(r'.*(bilibili\.com|BV[a-zA-Z0-9]{10}|b23\.tv).*')
     async def handle_bilibili_link(self, event: AstrMessageEvent):
