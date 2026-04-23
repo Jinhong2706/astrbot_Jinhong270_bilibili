@@ -136,22 +136,32 @@ class Jinhong270BilibiliPlugin(Star):
         return None
 
     async def _send_file_via_onebot(self, event: AstrMessageEvent, file_path: Path):
-        """尝试通过 OneBot 协议上传文件，成功返回 True，失败返回 False"""
         try:
-            adapter = event.session.adapter
-            msg_obj = event.message_obj
-            if msg_obj.message_type == 'private':
-                user_id = msg_obj.sender.user_id
-                await adapter.call_api('upload_private_file', {
-                    'user_id': user_id,
+            platform_name = event.get_platform_name()
+            message_type = event.message_obj.message_type
+            adapter = None
+
+            for adapter_instance in self.context.platform_manager.get_adapters():
+                if getattr(adapter_instance, 'platform_id', None) == platform_name:
+                    adapter = adapter_instance
+                    break
+
+            if adapter is None:
+                logger.warning("未找到适配器实例")
+                return False
+
+            if message_type == 'private':
+                user_id = event.message_obj.sender.user_id
+                await adapter.call_api('upload_file', {
+                    'user_id': int(user_id),
                     'file': str(file_path),
                     'name': file_path.name
                 })
                 return True
-            elif msg_obj.message_type == 'group':
-                group_id = msg_obj.group_id
-                await adapter.call_api('upload_group_file', {
-                    'group_id': group_id,
+            elif message_type == 'group':
+                group_id = event.message_obj.group_id
+                await adapter.call_api('upload_file', {
+                    'group_id': int(group_id),
                     'file': str(file_path),
                     'name': file_path.name
                 })
